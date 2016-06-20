@@ -201,3 +201,8 @@ plotRGB(CIRstack,
 # plot an RGB image
 plotRGB(RGBstack,
         stretch = 'lin')
+
+
+```
+
+This is a new sentence
