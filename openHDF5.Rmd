@@ -1,0 +1,203 @@
+---
+title: "OpenHDF5"
+author: "Jeff Atkins"
+date: "June 20, 2016"
+output: html_document
+---
+
+```{r load-libraries }
+# load libraries
+library(raster)
+library(rhdf5)
+library(rgdal)
+library(magrittr)
+```
+
+
+```{r select-file}
+###by assigning this bigass filename to one assignment you can reuse this DRY.
+f <- "../NeonDATA/D17-California/TEAK/2013/spectrometer/reflectance/Subset3NIS1_20130614_100459_atmcor.h5"
+
+#view h5 structure
+h5ls(f)
+```
+
+```{r import-spatial-info }
+#importing spatial info
+mapInfo <- h5read(f, 
+                  "map info",
+                  read.attributes = TRUE)
+
+mapInfo
+```
+
+```{r get-reflectance-metadata }
+
+# read in reflectance data attributes
+reflInfo <- h5readAttributes(file = f, 
+                            name = "Reflectance")
+
+#define scale factor
+scaleFactor <- reflInfo$`Scale Factor`
+
+# define no data value
+noDataValue <- as.numeric(reflInfo$`data ignore value`) 
+
+#running check to see if chr error corrected
+is.numeric(noDataValue)
+```
+
+```{r import-dims }
+
+# open the file for viewing -- this creates a connection to the hdf5 file, be aware
+# you can overwrite the file via this connection
+
+fid <- H5Fopen(f)
+
+#open the refelctance data set note that the structure here goes columns x rows x value
+did <- H5Dopen(fid, "Reflectance")
+
+# some languages read in columns first, some in rows first. R does rows first and index starts at 1
+
+#grab the dataset dimensions
+sid <- H5Dget_space(did)
+
+#dims are dimensions y x z is the pattern!!!!!  <------
+dims <- H5Sget_simple_extent_dims(sid)$size
+str(dims)
+
+#close all open connections
+H5Sclose(sid)  #sid element
+H5Dclose(did)
+H5Fclose(fid)
+```
+
+```{r read-data }
+
+#extract slice of H5 file
+b56 <- h5read(file = f,
+              name = "Reflectance",
+              index = list(1:dims[1], 1:dims[2], 56))
+class(b56)     #this method brings in an array, or rather a line of values
+```
+
+##converting data to matrix
+
+```{r convert-matrix }
+#this is cool, reshapes the array into a matrix, z layer is one value
+b56 <- b56[,,1]
+class(b56)
+
+#let's plot this thing
+image(b56)
+
+image(log(b56), 
+      main = "log transformed data")
+
+hist(b56)
+hist(log(b56))
+```
+
+```{r data-clean-up }
+
+# assign no data values to object
+b56[b56 == noDataValue] <- NA
+
+# applying the scale factor
+b56 <- b56 / scaleFactor
+
+hist(b56)
+```
+
+```{r transpose-data }
+#this transposes the data, but no everything is to the left and needs to be on the right
+b56 <- t(b56)
+image(log(b56))
+
+#what is going on is that the data need to be rasterized so that the indexs are coordinates
+```
+
+##Create Spatial Extent
+
+```{r create-spatial-extent}
+# split out mapInfo object
+mapInfo <- unlist(strsplit(mapInfo, ","))
+
+# value at 3 element in list
+mapInfo[3]
+
+#upper left hand, NW corner coordinate
+xMin <- as.numeric(mapInfo[4])
+yMax <- as.numeric(mapInfo[5])
+
+xRes <- as.numeric(mapInfo[6])
+yRes <- as.numeric(mapInfo[7])
+
+xMax = xMin + (dims[1] * xRes)
+yMin = yMax - (dims[2] * yRes)
+
+#remember you are in coordinate space so the columns here are x holy shit!
+```
+
+##Create spatial extent
+
+```{r create-extent }
+
+#the raster package has an extent object that it recognizes as the extent of the spatial extent
+
+rasExt <- extent(xMin, xMax, 
+                 yMin, yMax)
+
+# create raster object
+b56r <- raster(b56,
+               crs = CRS("+init=epsg:32611"))
+
+extent(b56r) <- rasExt
+
+# plot the data!
+plot(b56r, 
+     main = "Spatially referenced data")
+```
+
+## Importing NEON functions
+
+```{r import-using-functions }
+
+library(neonAOP)
+
+# this shit imports everything with a couple of lines
+b55 <- open_band(f, 
+                 bandNum = 55, 
+                 epsg = 32611)
+
+# import some bands!
+
+# true color
+#bands <- c(58, 34, 19) #why decreasing order? 
+
+#bringing out trees
+ bands <- c(90, 34, 19)
+# remember the spectrum is blue to red say 300 nm to 700 nm. You plot blue, gree, red in order for an image.
+
+# setting sptatial ref
+
+
+epsg = 32611
+
+# create raster stack
+RGBstack <- create_stack(f,
+                         bands = bands,
+                         epsg = 32611)
+
+CIRstack <- create_stack(f,
+                         bands = bands,
+                         epsg = epsg)
+
+plotRGB(CIRstack, 
+        axes = TRUE,
+        stretch = 'lin',
+        ylab = 'yep')
+
+# plot an RGB image
+plotRGB(RGBstack,
+        stretch = 'lin')
